@@ -123,6 +123,52 @@ detect_disk_type() {
   fi
 }
 
+# ---------- Display ----------
+
+# Prints one line per connected output, e.g. "eDP-1 144.00" — tries every
+# available source since not all of these exist on every session type.
+detect_refresh_rates() {
+  local out=""
+  if command -v xrandr >/dev/null 2>&1 && [[ "${XDG_SESSION_TYPE:-}" != "wayland" ]]; then
+    out="$(xrandr --query 2>/dev/null | awk '
+      /connected/ {name=$1}
+      /\*/ {
+        for (i=1;i<=NF;i++) if ($i ~ /\*/) {
+          gsub(/[*+]/,"",$i); print name, $i
+        }
+      }')"
+  fi
+  if [[ -z "$out" ]] && command -v wlr-randr >/dev/null 2>&1; then
+    out="$(wlr-randr 2>/dev/null | awk '
+      /^[A-Za-z]/ {name=$1}
+      /current/ {
+        for (i=1;i<=NF;i++) if ($i ~ /Hz/) { gsub(/Hz.*/,"",$i); print name, $i }
+      }')"
+  fi
+  if [[ -z "$out" ]]; then
+    # Last-resort fallback: kernel DRM info (works headless/without X libs).
+    for card in /sys/class/drm/*/modes; do
+      [[ -f "$card" ]] || continue
+      local mode conn
+      mode="$(head -n1 "$card" 2>/dev/null)"
+      conn="$(basename "$(dirname "$card")")"
+      [[ -n "$mode" ]] && out+="$conn ${mode}"$'\n'
+    done
+  fi
+  echo "$out" | sed '/^$/d'
+}
+
+detect_max_refresh_rate() {
+  local rates hz max=0
+  rates="$(detect_refresh_rates)"
+  [[ -z "$rates" ]] && { echo "unknown"; return; }
+  while IFS= read -r line; do
+    hz="$(awk '{print $2}' <<< "$line" | grep -oE '^[0-9]+')"
+    [[ -n "$hz" ]] && [[ "$hz" -gt "$max" ]] && max="$hz"
+  done <<< "$rates"
+  if [[ "$max" -eq 0 ]]; then echo "unknown"; else echo "${max} Hz"; fi
+}
+
 # ---------- Session / boot ----------
 
 detect_session_type() {
@@ -144,7 +190,7 @@ detect_kernel_version() {
 # ---------- Report ----------
 
 print_system_report() {
-  local family gpus gpu_models cpu_vendor cpu_model cpu_cores session secureboot ram disk disktype hybrid
+  local family gpus gpu_models cpu_vendor cpu_model cpu_cores session secureboot ram disk disktype hybrid refresh
 
   family="$(detect_distro_family)"
   gpus="$(detect_gpu_vendors)"
@@ -157,6 +203,7 @@ print_system_report() {
   ram="$(detect_ram)"
   disk="$(detect_disk_free_root)"
   disktype="$(detect_disk_type)"
+  refresh="$(detect_max_refresh_rate)"
 
   echo "=================================================="
   echo " System Report"
@@ -175,6 +222,7 @@ print_system_report() {
   if detect_hybrid_gpu; then
     printf "  %-18s %s\n" "Hybrid GPU:" "Yes (Optimus/PRIME-style laptop)"
   fi
+  printf "  %-18s %s\n" "Max refresh rate:" "$refresh"
   printf "  %-18s %s\n" "Session type:" "$session"
   printf "  %-18s %s\n" "Secure Boot:" "$secureboot"
   printf "  %-18s %s\n" "RAM:" "$ram"
@@ -205,5 +253,20 @@ print_system_report() {
     echo ""
     echo "NOTE: hybrid GPU laptop detected. drivers.sh will offer PRIME/Optimus"
     echo "setup so you can switch between integrated and discrete GPU per game."
+  fi
+
+  if [[ "$refresh" == "unknown" ]]; then
+    if [[ "$session" == "wayland" ]]; then
+      echo ""
+      echo "NOTE: couldn't read refresh rate under Wayland — install 'wlr-randr'"
+      echo "(compositor-dependent) for gameify to detect it next run."
+    fi
+  else
+    local hz_num="${refresh%% Hz}"
+    if [[ "$hz_num" =~ ^[0-9]+$ ]] && [[ "$hz_num" -ge 120 ]]; then
+      echo ""
+      echo "NOTE: high refresh-rate display detected (${refresh}). MangoHud/Gamescope"
+      echo "can cap frame rate to match it, avoiding wasted GPU work above the panel's limit."
+    fi
   fi
 }

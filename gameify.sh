@@ -11,6 +11,8 @@ source "$SCRIPT_DIR/drivers.sh"
 source "$SCRIPT_DIR/kernel.sh"
 source "$SCRIPT_DIR/gaming-stack.sh"
 source "$SCRIPT_DIR/tweaks.sh"
+source "$SCRIPT_DIR/apps.sh"
+source "$SCRIPT_DIR/heal.sh"
 
 if [[ "${EUID}" -eq 0 ]]; then
   echo "Please run this as a normal user, not root/sudo directly."
@@ -54,7 +56,9 @@ pkg_upgrade
 drivers_menu "$GPU_VENDORS"
 kernel_menu
 gaming_stack_menu
+apps_menu
 system_tweaks_menu
+auto_heal_menu
 
 echo ""
 echo "=================================================="

@@ -120,6 +120,104 @@ install_prime_tools() {
   echo "  For AMD hybrid setups (integrated + discrete AMD/Intel), the equivalent is:"
   echo "    DRI_PRIME=1 %command%"
   log_change "Printed PRIME/Optimus manual offload launch-option tip"
+
+  echo ""
+  fix_default_gpu_selection || true
+}
+
+# Installs a tiny `prime-run` wrapper into ~/.local/bin so any command can be
+# forced onto the discrete GPU with `prime-run %command%`, without the user
+# needing to remember the raw env-var incantation every time.
+install_prime_run_wrapper() {
+  local bindir="$HOME/.local/bin"
+  local wrapper="$bindir/prime-run"
+  mkdir -p "$bindir"
+  local vendors
+  vendors="$(detect_gpu_vendors)"
+
+  if [[ -f "$wrapper" ]]; then
+    echo "  ~/.local/bin/prime-run already exists, leaving it as-is."
+  else
+    if echo "$vendors" | grep -qw nvidia; then
+      cat > "$wrapper" <<'EOF'
+#!/usr/bin/env bash
+# Forces the following command onto the NVIDIA discrete GPU (Optimus/PRIME).
+export __NV_PRIME_RENDER_OFFLOAD=1
+export __GLX_VENDOR_LIBRARY_NAME=nvidia
+export __VK_LAYER_NV_optimus=NVIDIA_only
+exec "$@"
+EOF
+    else
+      cat > "$wrapper" <<'EOF'
+#!/usr/bin/env bash
+# Forces the following command onto the discrete GPU render node (AMD hybrid setups).
+export DRI_PRIME=1
+exec "$@"
+EOF
+    fi
+    chmod +x "$wrapper"
+    log_change "Installed ~/.local/bin/prime-run wrapper"
+  fi
+
+  case ":$PATH:" in
+    *":$bindir:"*) : ;;
+    *)
+      echo "  NOTE: $bindir isn't on your PATH in this shell. Add it in your"
+      echo "  ~/.bashrc or ~/.profile (most distros already do this for new sessions):"
+      echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+      ;;
+  esac
+  echo "  Usage: prime-run glxinfo | grep vendor    (or as a Steam launch option: prime-run %command%)"
+}
+
+# Diagnoses the classic hybrid-laptop bug where games/apps silently render on
+# the weaker integrated GPU instead of the discrete NVIDIA/AMD one, and offers
+# concrete, per-cause fixes instead of just restating the launch-option tip.
+fix_default_gpu_selection() {
+  if ! detect_hybrid_gpu; then
+    echo "  Not a hybrid-GPU system — nothing to fix here."
+    return 0
+  fi
+  echo "==> Checking which GPU actually renders by default on this hybrid laptop..."
+
+  local renderer=""
+  if command -v glxinfo >/dev/null 2>&1; then
+    renderer="$(glxinfo 2>/dev/null | awk -F': ' '/OpenGL renderer string/ {print $2}')"
+  fi
+
+  if [[ -z "$renderer" ]]; then
+    echo "  'glxinfo' not found — installing mesa-utils to check the active renderer..."
+    case "$PKG_FAMILY" in
+      debian) pkg_install mesa-utils ;;
+      fedora) pkg_install glx-utils ;;
+      arch) pkg_install mesa-utils ;;
+      opensuse) pkg_install Mesa-demo-x ;;
+      *) : ;;
+    esac
+    renderer="$(glxinfo 2>/dev/null | awk -F': ' '/OpenGL renderer string/ {print $2}')"
+  fi
+
+  echo "  Default renderer: ${renderer:-unknown}"
+
+  if echo "$renderer" | grep -qiE 'intel|iGPU'; then
+    echo ""
+    echo "  Default render path is the Intel iGPU, not your discrete GPU. This is"
+    echo "  normal at the desktop level (saves battery) but games launched without"
+    echo "  an offload prefix will inherit it and run at iGPU performance. Fixes:"
+    echo "    1. Per-game: launch via 'prime-run %command%' (installed below) or the"
+    echo "       Steam launch-option env vars from install_prime_tools."
+    echo "    2. NVIDIA laptops with 'nvidia' power-management mode (not"
+    echo "       on-demand) can instead run everything on the dGPU by setting the"
+    echo "       NVIDIA X Server Settings PRIME profile to 'NVIDIA (Performance Mode)'."
+    echo "    3. If a specific Steam game still won't pick it up, check its own"
+    echo "       in-game GPU-selection setting — some games ignore env vars and pick"
+    echo "       a device index directly."
+    log_change "Diagnosed hybrid-GPU default-renderer issue (Intel iGPU active by default)"
+  else
+    echo "  Default renderer already looks like your discrete/expected GPU — good."
+  fi
+
+  install_prime_run_wrapper
 }
 
 # Installs drivers for every vendor detected automatically (used in --auto mode)
@@ -142,13 +240,19 @@ drivers_menu() {
   echo ""
   echo "Detected GPU(s): ${detected:-none found}"
   echo "Which driver(s) do you want to install?"
-  select opt in "Install detected ($detected)" "NVIDIA only" "AMD only" "Intel only" "Skip"; do
-    case "$REPLY" in
-      1) install_detected_drivers "$detected"; break ;;
-      2) install_nvidia; break ;;
-      3) install_amd; break ;;
-      4) install_intel; break ;;
-      5) echo "Skipping driver install."; break ;;
+  local -a opts=("Install detected ($detected)" "NVIDIA only" "AMD only" "Intel only")
+  if detect_hybrid_gpu; then
+    opts+=("Fix wrong default GPU (hybrid laptop)")
+  fi
+  opts+=("Skip")
+  select opt in "${opts[@]}"; do
+    case "$opt" in
+      "Install detected ($detected)") install_detected_drivers "$detected"; break ;;
+      "NVIDIA only") install_nvidia; break ;;
+      "AMD only") install_amd; break ;;
+      "Intel only") install_intel; break ;;
+      "Fix wrong default GPU (hybrid laptop)") fix_default_gpu_selection; break ;;
+      "Skip") echo "Skipping driver install."; break ;;
       *) echo "Invalid choice, pick a number from the list." ;;
     esac
   done

@@ -22,7 +22,34 @@ _xanmod_psabi_level() {
   fi
 }
 
+_kernel_secure_boot_check() {
+  local sb
+  sb="$(detect_secure_boot 2>/dev/null || echo "unknown")"
+  if [[ "$sb" == *"enabled"* ]]; then
+    echo ""
+    echo "  WARNING: Secure Boot is ENABLED."
+    echo "  XanMod/Liquorix/linux-zen packages are community-built and are NOT signed"
+    echo "  with a key your firmware already trusts. With Secure Boot on, the new"
+    echo "  kernel will likely fail to boot (or the bootloader will silently fall"
+    echo "  back to your current kernel) unless you either:"
+    echo "    1) Disable Secure Boot in firmware/UEFI settings, or"
+    echo "    2) Sign the kernel modules yourself and enroll a MOK key (mokutil)."
+    echo ""
+    if command -v mokutil >/dev/null 2>&1; then
+      read -r -p "  Continue installing anyway? [y/N] " sb_go
+      [[ "$sb_go" =~ ^[Yy]$ ]] || { echo "  Skipping kernel install."; return 1; }
+    else
+      echo "  ('mokutil' isn't installed, so gameify can't offer to enroll a MOK key"
+      echo "  for you automatically — you'd need to do that by hand.)"
+      read -r -p "  Continue installing anyway? [y/N] " sb_go
+      [[ "$sb_go" =~ ^[Yy]$ ]] || { echo "  Skipping kernel install."; return 1; }
+    fi
+  fi
+  return 0
+}
+
 install_xanmod() {
+  _kernel_secure_boot_check || return 1
   if [[ "$PKG_FAMILY" != "debian" ]]; then
     echo "  XanMod's official repo only covers Debian/Ubuntu-based distros."
     echo "  See https://xanmod.org for other install methods on your distro."
@@ -47,6 +74,7 @@ install_xanmod() {
 }
 
 install_liquorix() {
+  _kernel_secure_boot_check || return 1
   if [[ "$PKG_FAMILY" != "debian" ]]; then
     echo "  Liquorix's official repo only covers Debian/Ubuntu-based distros."
     echo "  See https://liquorix.net for other install methods on your distro."
@@ -67,6 +95,7 @@ install_liquorix() {
 }
 
 install_linux_zen() {
+  _kernel_secure_boot_check || return 1
   if [[ "$PKG_FAMILY" != "arch" ]]; then
     echo "  linux-zen is an official Arch repo package — not applicable to this distro."
     return 1
@@ -88,6 +117,7 @@ kernel_menu() {
   echo "kernel your distro ships is fine for most people, but these offer lower"
   echo "latency scheduling and other tweaks some gamers prefer."
   echo "(You can always boot back into your original kernel from the bootloader menu.)"
+  echo "  Secure Boot: $(detect_secure_boot 2>/dev/null || echo unknown)"
 
   case "$PKG_FAMILY" in
     debian)

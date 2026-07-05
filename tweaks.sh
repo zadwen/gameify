@@ -95,7 +95,12 @@ fix_broken_wine_prefixes() {
     if _wine_prefix_is_broken "$p"; then
       broken_any=true
       echo "  Broken prefix found: $p"
-      read -r -p "  Attempt repair with 'wineboot -u'? [y/N] " fix_it
+      local fix_it="n"
+      if [[ -t 0 ]]; then
+        read -r -p "  Attempt repair with 'wineboot -u'? [y/N] " fix_it || fix_it="n"
+      else
+        echo "  (non-interactive run — skipping repair prompt; re-run by hand to fix)"
+      fi
       if [[ "$fix_it" =~ ^[Yy]$ ]]; then
         WINEPREFIX="$p" wineboot -u 2>/dev/null && \
           log_change "Repaired Wine prefix: $p" || \

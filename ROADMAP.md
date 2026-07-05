@@ -4,6 +4,30 @@ An honest look at the gap between "a script that configures your existing
 distro" (what `gameify` is today) and "a gaming distro" (what Nobara and
 Bazzite are), and the real steps to close it.
 
+## Recently completed
+
+The system-analyzer/auto-healing pass added:
+
+- [x] Full hardware/session profiling: CPU, GPU(s), RAM, disk type
+      (NVMe/SSD/HDD), monitor refresh rate, Secure Boot state, kernel
+      version, session type (X11/Wayland) — `detect.sh`
+- [x] Hybrid-GPU (Optimus/PRIME) default-renderer diagnosis + `prime-run`
+      wrapper, on top of the existing PRIME tooling install — `drivers.sh`
+- [x] Secure Boot pre-checks before offering XanMod/Liquorix/linux-zen,
+      since unsigned community kernels commonly fail to boot with it on —
+      `kernel.sh`
+- [x] Per-game Proton override via direct, backed-up `config.vdf` edits,
+      on top of GE-Proton/Gamescope/vkBasalt already being installed and
+      auto-updated — `gaming-stack.sh`
+- [x] Bug auto-healing: `journalctl` + Steam log scanning for known error
+      signatures (Vulkan ICD, `vm.max_map_count`, GameMode, broken Wine
+      prefixes, shader cache corruption, missing 32-bit libs), with safe
+      fixes applied automatically — `heal.sh`
+- [x] Everyday app installs: Discord/OBS/Spotify via Flatpak, Battle.net/EA
+      App handed off to Lutris's maintained install scripts — `apps.sh`
+- [x] Self-managed weekly cron job (`update.sh --install-cron`/
+      `--remove-cron`), running the auto-heal scan on every cycle
+
 ## Where gameify stands today
 
 A convenience layer on top of your existing distro: detect hardware,
@@ -45,6 +69,26 @@ model, not just a different package list.
       without leaving their existing desktop environment installed.
 - [ ] A minimal TUI (using something like `gum` or `dialog`) instead of
       plain `select` menus — much friendlier on first run.
+- [ ] **GNOME gaming extensions** — auto-install/configure
+      `gamemode`-aware indicator extensions (e.g. a MangoHud/GameMode status
+      toggle in the top bar) and a "Game Mode" GNOME profile that disables
+      animations/idle-suspend while a game is running, mirroring what
+      Bazzite's desktop layer does out of the box. Needs a KDE equivalent
+      too (Plasma has more native support for this already via KWin rules).
+- [ ] **OBS scene/profile presets** — ship ready-made OBS profiles for
+      common gameplay-recording setups (webcam+game capture, "just
+      gameplay", clip-highlights) instead of leaving a blank OBS install,
+      pre-wired to PipeWire capture on Wayland.
+- [ ] **Anti-cheat compatibility reporting** — surface Are We Anti-Cheat
+      Yet–style data (respecting its terms of use/attribution) in the
+      system report and per-game Proton menu, so people find out a title
+      won't work under Proton *before* spending an hour troubleshooting it,
+      not after.
+- [ ] Expand `heal.sh`'s known-error signature set over time (this is the
+      kind of thing that benefits most from real bug reports — see
+      **Contributing** below) and add an opt-in "send anonymized signature
+      counts" telemetry mode, off by default, purely to prioritize which
+      signatures are worth adding next.
 
 ## Medium-term: closing the distro-model gap
 

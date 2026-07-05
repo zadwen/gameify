@@ -9,8 +9,21 @@ script you run on the distro you already have, instead of a whole new ISO.
 
 - **Real system profiling** — reads CPU model/vendor/cores, detects every
   GPU via `lspci` (including hybrid Optimus/PRIME laptops with two GPUs),
-  checks disk type (NVMe/SSD/HDD), Secure Boot state, kernel version, and
-  session type (X11/Wayland) before touching anything.
+  checks disk type (NVMe/SSD/HDD), monitor refresh rate (`xrandr`/
+  `wlr-randr`/DRM fallback), Secure Boot state, kernel version, and session
+  type (X11/Wayland) before touching anything.
+- **Hybrid-GPU aware, not just hybrid-GPU-tolerant** — actively checks
+  which GPU is rendering by default on Optimus/PRIME laptops (`glxinfo`),
+  flags when a game would silently land on the weak Intel iGPU, and
+  installs a `prime-run` wrapper so forcing the discrete GPU is one word
+  instead of a paragraph of env vars.
+- **Bug auto-healing** — scans `journalctl` and Steam's own logs for a set
+  of known recurring Linux-gaming error signatures (missing Vulkan ICD,
+  `vm.max_map_count` too low, GameMode unavailable, corrupted Wine
+  prefixes, corrupted shader cache, missing 32-bit libs) and applies the
+  safe fix automatically. GPU-reset/Xid errors are reported with next
+  steps rather than guessed at, since those usually need a human to look
+  at hardware/power settings.
 - **Package-manager-agnostic** — one abstraction layer over `apt`, `dnf`,
   `pacman`, `zypper`, so the same script adapts to Debian/Ubuntu,
   Fedora/Nobara, Arch/Manjaro, and openSUSE.
@@ -40,8 +53,8 @@ script you run on the distro you already have, instead of a whole new ISO.
 ## Usage
 
 ```bash
-git clone https://github.com/zadwen/distrochanger.git
-cd distrochanger
+git clone https://github.com/zadwen/gameify.git
+cd gameify
 chmod +x *.sh
 ./gameify.sh
 ```
@@ -53,35 +66,88 @@ that need it, and tells you before each one.
 
 **Drivers** (`drivers.sh`)
 - NVIDIA / AMD / Intel, matched to what was actually detected
-- Hybrid-GPU laptops get PRIME/Optimus tooling where packaged, plus the
-  manual per-game GPU-offload launch options either way (these work on
-  every distro, with or without extra tooling)
+- Hybrid-GPU laptops get PRIME/Optimus tooling where packaged, plus a
+  "Fix wrong default GPU" diagnostic that checks the active renderer and
+  either explains why (and how to force the discrete GPU per-game) or
+  confirms it's already correct
+- Installs a `~/.local/bin/prime-run` wrapper (`prime-run %command%` in a
+  Steam launch option, or `prime-run some-app` from a terminal)
 
 **Performance kernel** (`kernel.sh`, opt-in, skipped by default)
 - XanMod or Liquorix on Debian/Ubuntu (auto-detects your CPU's x86-64
   instruction level for XanMod's tuned builds)
 - linux-zen on Arch (official repo package, no AUR helper required)
+- Checks Secure Boot state first and warns clearly that these unsigned,
+  community-built kernels will likely fail to boot with Secure Boot on,
+  with the two real ways to resolve that (disable it, or sign + enroll a
+  MOK key) before asking whether to continue anyway
 
 **Gaming stack** (`gaming-stack.sh`)
 - Steam, Wine, GameMode, Lutris, MangoHud, ProtonUp-Qt, Heroic (optional)
 - GE-Proton — installed and kept current automatically from GitHub releases
 - Gamescope (SteamOS-style compositor, useful for handheld/couch setups)
 - vkBasalt (Vulkan post-processing: sharpening, color correction)
+- Per-game Proton override — writes a `CompatToolMapping` entry straight
+  into Steam's `config.vdf` for a given AppID (with an automatic backup),
+  so you don't have to click through Properties > Compatibility by hand
+
+**Everyday apps** (`apps.sh`, all optional)
+- Discord, OBS Studio, Spotify — via Flatpak, auto-updating
+- Battle.net / EA App — neither has a native Linux build or a Flatpak, so
+  gameify hands off to Lutris's own maintained install scripts
+  (`lutris:install/battlenet`, `lutris:install/ea-app`) instead of trying
+  to reimplement installer logic that changes with every client update
 
 **Tweaks & auto-fixes** (`tweaks.sh`)
 - Checks for a working Vulkan ICD and installs what's missing
-- Raised `vm.max_map_count` for certain Proton/UE titles
+- Raises `vm.max_map_count` for certain Proton/UE titles
 - Adds your user to the `gamemode` group
 - Scans known Wine/Proton prefix locations for corruption (missing
   `drive_c` or `system.reg`) and offers to repair with `wineboot -u`
 
+**Bug auto-healing** (`heal.sh`)
+- Scans the last 1-2 days of `journalctl` (system + user) and Steam's log
+  directory for known error signatures and either fixes them automatically
+  (reusing the exact functions above) or reports them with a concrete next
+  step. Runs at the end of `gameify.sh` and at the start of every
+  `update.sh` run.
+
 **Weekly maintenance** (`update.sh`)
-- Refreshes Flatpak apps and GE-Proton with no password needed
+- Refreshes Flatpak apps, GE-Proton, and runs the auto-heal log scan —
+  none of which need a password
 - When run interactively, also upgrades system packages and re-checks
   drivers
+- `./update.sh --install-cron` adds a weekly crontab entry for you (Sundays
+  04:00); `./update.sh --remove-cron` takes it back out
 - See **Setting up automatic updates** below for the sudo/cron nuance —
   it's a real limitation, not a bug, and worth reading before you wire up
   a cron job.
+
+## Per-game Proton override
+
+The gaming-stack menu offers this at the end of install, or run it directly:
+
+```bash
+source detect.sh pkgmanager.sh drivers.sh gaming-stack.sh   # or just run gameify.sh once
+set_proton_for_game 730 GE-Proton9-20   # AppID, then the exact Proton build name
+```
+
+Close Steam first — it rewrites `config.vdf` on exit and would overwrite the
+change otherwise. A backup (`config.vdf.gameify.bak`) is made automatically.
+
+## Fixing "my game is using the wrong GPU"
+
+On hybrid-GPU (Optimus/PRIME) laptops:
+
+```bash
+prime-run %command%          # as a Steam launch option
+prime-run some-native-app    # from a terminal
+```
+
+`drivers.sh`'s "Fix wrong default GPU" menu option checks which GPU is
+actually rendering by default and explains the fix that applies to your
+situation — the wrapper above, an NVIDIA power-management profile change,
+or an in-game GPU-selection setting some titles use instead of env vars.
 
 ## Setting up automatic updates
 
@@ -126,22 +192,31 @@ unattended behavior if you want it:
    `zypper` for your user), and accept that's a deliberate security
    tradeoff you're making for convenience.
 
-A plain crontab entry (does the non-sudo parts only, safely):
+Easiest option — let gameify manage its own crontab entry (does only the
+non-sudo parts on schedule, safely):
+```bash
+./update.sh --install-cron   # adds a weekly Sunday 04:00 entry
+./update.sh --remove-cron    # takes it back out
 ```
-0 4 * * 0 /path/to/distrochanger/update.sh >> ~/.local/share/gameify/update.log 2>&1
+This is equivalent to hand-adding:
+```
+0 4 * * 0 /path/to/gameify/update.sh >> ~/.local/share/gameify/cron.log 2>&1
 ```
 
 ## Project layout
 
 ```
 gameify.sh          entry point — report, menus, orchestration, final summary
-update.sh           weekly maintenance (Flatpak/GE-Proton always, sudo steps if interactive)
-detect.sh           distro/CPU/GPU/RAM/disk/Secure-Boot/session detection + report
+update.sh           weekly maintenance + cron install/remove (--install-cron/--remove-cron)
+detect.sh           distro/CPU/GPU/RAM/disk/refresh-rate/Secure-Boot/session detection + report
 pkgmanager.sh       apt/dnf/pacman/zypper abstraction, Flatpak helpers, change-log
-drivers.sh          per-distro, per-vendor driver install + hybrid-GPU/PRIME handling
-kernel.sh           optional XanMod/Liquorix/linux-zen performance kernel install
+drivers.sh          per-distro, per-vendor driver install + hybrid-GPU/PRIME + default-GPU fix
+kernel.sh           optional XanMod/Liquorix/linux-zen performance kernel install + Secure Boot check
 gaming-stack.sh     Steam/Wine/GameMode/Lutris/MangoHud/ProtonUp-Qt/GE-Proton/Gamescope/vkBasalt/Heroic
+                     + per-game Proton override (config.vdf)
+apps.sh             optional everyday apps: Discord/OBS/Spotify (Flatpak), Battle.net/EA App (Lutris)
 tweaks.sh           Vulkan check, vm.max_map_count, gamemode group, Wine prefix repair
+heal.sh             journalctl + Steam log scanning, known-error auto-fixes
 ```
 
 Every install/tweak function that changes something calls `log_change`

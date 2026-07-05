@@ -171,6 +171,112 @@ install_or_update_proton_ge() {
   echo "  Restart Steam, then enable it per-game under Properties > Compatibility."
 }
 
+# ---------- Per-game Proton selection ----------
+
+_steam_config_vdf() {
+  local native="$HOME/.steam/root/config/config.vdf"
+  local native_alt="$HOME/.local/share/Steam/config/config.vdf"
+  local flat="$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam/config/config.vdf"
+  if [[ -f "$native" ]]; then echo "$native"
+  elif [[ -f "$native_alt" ]]; then echo "$native_alt"
+  elif [[ -f "$flat" ]]; then echo "$flat"
+  else echo ""
+  fi
+}
+
+list_installed_proton_versions() {
+  local compat_dir
+  compat_dir="$(_steam_compat_dir)"
+  echo "Custom builds in $compat_dir:"
+  if [[ -d "$compat_dir" ]]; then
+    find "$compat_dir" -mindepth 1 -maxdepth 1 -type d -printf '  - %f\n' 2>/dev/null
+  fi
+  echo "Steam-shipped builds (proton_experimental, proton_9, etc.) are managed by"
+  echo "Steam itself and don't need to be listed here."
+}
+
+# set_proton_for_game <appid> <tool-name>
+# Writes/updates the CompatToolMapping entry for one AppID in Steam's
+# config.vdf so a specific game always launches with a specific Proton
+# build, without having to click through Properties > Compatibility in the
+# Steam UI. Steam must be closed while this runs, since it rewrites the
+# file on exit and would otherwise clobber this change.
+set_proton_for_game() {
+  local appid="$1" tool="$2"
+  if [[ -z "$appid" || -z "$tool" ]]; then
+    echo "  Usage: set_proton_for_game <appid> <proton-tool-name>"
+    return 1
+  fi
+  local vdf
+  vdf="$(_steam_config_vdf)"
+  if [[ -z "$vdf" ]]; then
+    echo "  Couldn't find Steam's config.vdf — has Steam been launched at least once?"
+    return 1
+  fi
+  if pgrep -x steam >/dev/null 2>&1; then
+    echo "  Steam is currently running — close it first, or this change will be"
+    echo "  overwritten when Steam next exits and rewrites config.vdf."
+    read -r -p "  Continue anyway? [y/N] " go
+    [[ "$go" =~ ^[Yy]$ ]] || return 1
+  fi
+
+  cp "$vdf" "$vdf.gameify.bak"
+
+  python3 - "$vdf" "$appid" "$tool" <<'PYEOF'
+import re, sys
+path, appid, tool = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, "r", encoding="utf-8", errors="surrogateescape") as f:
+    data = f.read()
+
+entry = f'\t\t\t\t"{appid}"\n\t\t\t\t{{\n\t\t\t\t\t"name"\t\t"{tool}"\n\t\t\t\t\t"config"\t\t""\n\t\t\t\t\t"priority"\t\t"250"\n\t\t\t\t}}\n'
+
+# Replace an existing block for this appid if present, else insert one
+# right after the CompatToolMapping opening brace.
+pattern = re.compile(
+    r'(\t{4}"' + re.escape(appid) + r'"\s*\n\t{4}\{)[^}]*?(\n\t{4}\})',
+    re.DOTALL,
+)
+if re.search(r'"CompatToolMapping"', data):
+    if pattern.search(data):
+        data = pattern.sub(lambda m: entry.rstrip("\n"), data)
+    else:
+        data = re.sub(
+            r'("CompatToolMapping"\s*\n\t*\{)',
+            lambda m: m.group(1) + "\n" + entry.rstrip("\n"),
+            data,
+            count=1,
+        )
+    with open(path, "w", encoding="utf-8", errors="surrogateescape") as f:
+        f.write(data)
+    print("ok")
+else:
+    print("no-section")
+PYEOF
+  local result=$?
+  if [[ $result -ne 0 ]] || ! command -v python3 >/dev/null 2>&1; then
+    echo "  python3 not available — can't safely edit config.vdf automatically."
+    echo "  Fallback: set it manually in Steam under the game's Properties >"
+    echo "  Compatibility tab (this is the officially supported way)."
+    cp "$vdf.gameify.bak" "$vdf" 2>/dev/null
+    return 1
+  fi
+  log_change "Set Proton override for AppID $appid -> $tool"
+  echo "  Backup saved as $vdf.gameify.bak"
+  echo "  Restart Steam for the change to take effect."
+}
+
+per_game_proton_menu() {
+  echo ""
+  echo "Per-game Proton selection (edits Steam's config.vdf directly)."
+  list_installed_proton_versions
+  echo ""
+  read -r -p "AppID to configure (find it on steamdb.info or the store URL, blank to skip): " appid
+  [[ -z "$appid" ]] && { echo "Skipped."; return; }
+  read -r -p "Proton build name exactly as Steam shows it (e.g. GE-Proton9-20, proton_experimental): " tool
+  [[ -z "$tool" ]] && { echo "Skipped."; return; }
+  set_proton_for_game "$appid" "$tool"
+}
+
 gaming_stack_menu() {
   echo ""
   echo "Core gaming stack: Steam, Wine, GameMode, Lutris, MangoHud, ProtonUp-Qt,"
@@ -199,4 +305,10 @@ gaming_stack_menu() {
     install_heroic || echo "  Heroic install failed — skipping."
   fi
   echo "==> Gaming stack installed."
+
+  echo ""
+  read -r -p "Set a specific Proton build for a specific game now? [y/N] " want_proton_override
+  if [[ "$want_proton_override" =~ ^[Yy]$ ]]; then
+    per_game_proton_menu
+  fi
 }

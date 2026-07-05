@@ -31,9 +31,42 @@ source "$SCRIPT_DIR/pkgmanager.sh"
 source "$SCRIPT_DIR/drivers.sh"
 source "$SCRIPT_DIR/gaming-stack.sh"
 source "$SCRIPT_DIR/tweaks.sh"
+source "$SCRIPT_DIR/heal.sh"
 
 PKG_FAMILY="$(detect_distro_family)"
 export PKG_FAMILY
+
+# --install-cron: adds a weekly (Sunday 04:00) crontab entry that runs this
+# script non-interactively, then exits. Doesn't touch anything else.
+if [[ "${1:-}" == "--install-cron" ]]; then
+  CRON_MARKER="# gameify weekly update"
+  CRON_LINE="0 4 * * 0 $SCRIPT_DIR/update.sh >> \"$HOME/.local/share/gameify/cron.log\" 2>&1 $CRON_MARKER"
+  mkdir -p "$HOME/.local/share/gameify"
+  existing="$(crontab -l 2>/dev/null || true)"
+  if echo "$existing" | grep -qF "$CRON_MARKER"; then
+    echo "A gameify cron job is already installed:"
+    echo "$existing" | grep -F "$CRON_MARKER"
+    exit 0
+  fi
+  { echo "$existing"; echo "$CRON_LINE"; } | grep -v '^$' | crontab -
+  echo "Installed weekly cron job (Sundays at 04:00):"
+  echo "  $CRON_LINE"
+  echo "Output will be appended to ~/.local/share/gameify/cron.log"
+  echo ""
+  echo "Note: cron jobs run non-interactively and can't use sudo without a"
+  echo "password prompt, so the scheduled run only does the password-free parts"
+  echo "(Flatpak updates, GE-Proton refresh, log-based auto-heal). Run"
+  echo "'./update.sh' by hand periodically for the full system/driver upgrade,"
+  echo "or see README.md for a systemd --user timer alternative that can."
+  exit 0
+fi
+
+if [[ "${1:-}" == "--remove-cron" ]]; then
+  CRON_MARKER="# gameify weekly update"
+  crontab -l 2>/dev/null | grep -vF "$CRON_MARKER" | crontab - || true
+  echo "Removed gameify's cron job (if it was present)."
+  exit 0
+fi
 
 INTERACTIVE=false
 if [[ -t 0 ]]; then
@@ -56,6 +89,15 @@ fi
 
   echo "==> Refreshing GE-Proton..."
   install_or_update_proton_ge || echo "  GE-Proton refresh failed — will retry next run."
+
+  echo "==> Running auto-heal log scan..."
+  if [[ "$INTERACTIVE" == true ]]; then
+    run_auto_heal || echo "  Auto-heal scan hit an error — see above."
+  else
+    # Non-interactive: scan and auto-fix, but skip anything that would
+    # otherwise prompt (e.g. clearing shader cache), logging it instead.
+    run_auto_heal </dev/null || echo "  Auto-heal scan hit an error — see above."
+  fi
 
   if [[ "$INTERACTIVE" == true ]]; then
     echo "==> Interactive session detected — updating system packages and drivers..."
