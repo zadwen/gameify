@@ -7,7 +7,11 @@ set -euo pipefail
 _install_nvidia_debian() {
   if command -v ubuntu-drivers >/dev/null 2>&1; then
     echo "  Ubuntu-based system detected — using ubuntu-drivers autoinstall (auto-picks the right version)."
-    sudo ubuntu-drivers autoinstall
+    if [[ "$DRY_RUN" == true ]]; then
+      dry_run_note "ubuntu-drivers autoinstall"
+    else
+      sudo ubuntu-drivers autoinstall
+    fi
   else
     echo "  Plain Debian detected. This needs the 'contrib' and 'non-free' repos enabled"
     echo "  in /etc/apt/sources.list before this will work. Attempting install anyway..."
@@ -42,8 +46,12 @@ _install_nvidia_arch() {
 _install_nvidia_opensuse() {
   echo "  openSUSE NVIDIA install varies by version (Leap vs Tumbleweed) and needs a"
   echo "  community repo added first. Attempting the common Tumbleweed path..."
-  sudo zypper addrepo --refresh https://download.nvidia.com/opensuse/tumbleweed nvidia-repo 2>/dev/null || true
-  sudo zypper refresh || true
+  if [[ "$DRY_RUN" == true ]]; then
+    dry_run_note "zypper addrepo nvidia-repo + refresh"
+  else
+    sudo zypper addrepo --refresh https://download.nvidia.com/opensuse/tumbleweed nvidia-repo 2>/dev/null || true
+    sudo zypper refresh || true
+  fi
   pkg_install x11-video-nvidiaG06 || {
     echo "  Automatic install didn't complete. Follow the official guide instead:"
     echo "  https://en.opensuse.org/SDB:NVIDIA_drivers"
@@ -146,6 +154,8 @@ install_prime_run_wrapper() {
 
   if [[ -f "$wrapper" ]]; then
     echo "  ~/.local/bin/prime-run already exists, leaving it as-is."
+  elif [[ "$DRY_RUN" == true ]]; then
+    dry_run_note "write $wrapper (offload wrapper for: ${vendors:-discrete GPU})"
   else
     if echo "$vendors" | grep -qw nvidia; then
       cat > "$wrapper" <<'EOF'
@@ -249,6 +259,17 @@ drivers_menu() {
   echo ""
   echo "Detected GPU(s): ${detected:-none found}"
   echo "Which driver(s) do you want to install? [Standard]"
+
+  if ! is_interactive; then
+    if [[ -n "$detected" && "$detected" != "unknown" ]]; then
+      echo "  (non-interactive — installing detected driver(s): $detected)"
+      install_detected_drivers "$detected"
+    else
+      echo "  (non-interactive, no GPU auto-detected — skipping driver install)"
+    fi
+    return 0
+  fi
+
   local -a opts=("Install detected ($detected)" "NVIDIA only" "AMD only" "Intel only")
   if detect_hybrid_gpu; then
     opts+=("[Advanced] Fix wrong default GPU (hybrid laptop)")

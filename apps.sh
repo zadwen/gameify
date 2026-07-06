@@ -43,6 +43,10 @@ _lutris_install_via_protocol() {
   echo "  This opens Lutris, which downloads the official $label installer and"
   echo "  runs it under a Wine/Proton runner it manages — gameify doesn't touch"
   echo "  that installer directly, since Lutris keeps these scripts current."
+  if [[ "$DRY_RUN" == true ]]; then
+    dry_run_note "open lutris:install/$slug (launches Lutris's $label installer)"
+    return 0
+  fi
   if command -v xdg-open >/dev/null 2>&1; then
     xdg-open "lutris:install/$slug" >/dev/null 2>&1 &
   elif command -v lutris >/dev/null 2>&1; then
@@ -68,9 +72,9 @@ apps_menu() {
   echo ""
   echo "[Standard] Optional everyday apps (Flatpak, auto-update with your other Flatpaks):"
   local -a want=()
-  read -r -p "Install Discord? [y/N] " a; [[ "$a" =~ ^[Yy]$ ]] && want+=("discord")
-  read -r -p "Install OBS Studio? [y/N] " a; [[ "$a" =~ ^[Yy]$ ]] && want+=("obs")
-  read -r -p "Install Spotify? [y/N] " a; [[ "$a" =~ ^[Yy]$ ]] && want+=("spotify")
+  [[ "$(ask_yn "Install Discord?" N)" == y ]] && want+=("discord")
+  [[ "$(ask_yn "Install OBS Studio?" N)" == y ]] && want+=("obs")
+  [[ "$(ask_yn "Install Spotify?" N)" == y ]] && want+=("spotify")
 
   if tier_enabled experimental; then
     echo ""
@@ -78,8 +82,8 @@ apps_menu() {
     echo "installing them hands off to Lutris, which runs the official Windows"
     echo "installer under Wine. This works well in practice but is a less"
     echo "officially-supported path than anything else in this menu."
-    read -r -p "Set up Battle.net via Lutris? [y/N] " a; [[ "$a" =~ ^[Yy]$ ]] && want+=("battlenet")
-    read -r -p "Set up EA App via Lutris? [y/N] " a; [[ "$a" =~ ^[Yy]$ ]] && want+=("ea_app")
+    [[ "$(ask_yn "Set up Battle.net via Lutris?" N)" == y ]] && want+=("battlenet")
+    [[ "$(ask_yn "Set up EA App via Lutris?" N)" == y ]] && want+=("ea_app")
   else
     echo ""
     echo "[Experimental tier disabled] Skipping Battle.net/EA App (Lutris-based)."

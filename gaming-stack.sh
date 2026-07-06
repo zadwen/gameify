@@ -7,13 +7,21 @@ enable_32bit() {
   echo "==> Enabling 32-bit library support (needed for many older/Proton games)..."
   case "$PKG_FAMILY" in
     debian)
-      sudo dpkg --add-architecture i386
+      if [[ "$DRY_RUN" == true ]]; then
+        dry_run_note "dpkg --add-architecture i386"
+      else
+        sudo dpkg --add-architecture i386
+      fi
       pkg_update
       ;;
     arch)
       if ! grep -q '^\[multilib\]' /etc/pacman.conf; then
-        echo "  Enabling [multilib] repo in /etc/pacman.conf..."
-        sudo sed -i "/^#\[multilib\]/,/^#Include/ s/^#//" /etc/pacman.conf
+        if [[ "$DRY_RUN" == true ]]; then
+          dry_run_note "enable [multilib] in /etc/pacman.conf"
+        else
+          echo "  Enabling [multilib] repo in /etc/pacman.conf..."
+          sudo sed -i "/^#\[multilib\]/,/^#Include/ s/^#//" /etc/pacman.conf
+        fi
         pkg_update
       else
         echo "  [multilib] already enabled."
@@ -162,6 +170,11 @@ install_or_update_proton_ge() {
     return 1
   fi
 
+  if [[ "$DRY_RUN" == true ]]; then
+    dry_run_note "download + extract GE-Proton $tag into $compat_dir"
+    return 0
+  fi
+
   echo "  Installing GE-Proton $tag into $compat_dir ..."
   tmpfile="$(mktemp --suffix=.tar.gz)"
   curl -fsSL "$url" -o "$tmpfile"
@@ -216,8 +229,14 @@ set_proton_for_game() {
   if pgrep -x steam >/dev/null 2>&1; then
     echo "  Steam is currently running — close it first, or this change will be"
     echo "  overwritten when Steam next exits and rewrites config.vdf."
-    read -r -p "  Continue anyway? [y/N] " go
-    [[ "$go" =~ ^[Yy]$ ]] || return 1
+    if [[ "$(ask_yn "  Continue anyway?" N)" != y ]]; then
+      return 1
+    fi
+  fi
+
+  if [[ "$DRY_RUN" == true ]]; then
+    dry_run_note "back up $vdf and set CompatToolMapping[$appid] = $tool"
+    return 0
   fi
 
   cp "$vdf" "$vdf.gameify.bak"
@@ -266,13 +285,19 @@ PYEOF
 }
 
 per_game_proton_menu() {
+  if ! is_interactive; then
+    echo "  (non-interactive — skipping per-game Proton override; run interactively"
+    echo "  or call set_proton_for_game <appid> <tool> directly)"
+    return 0
+  fi
   echo ""
   echo "Per-game Proton selection (edits Steam's config.vdf directly)."
   list_installed_proton_versions
   echo ""
-  read -r -p "AppID to configure (find it on steamdb.info or the store URL, blank to skip): " appid
+  local appid tool
+  read -r -p "AppID to configure (find it on steamdb.info or the store URL, blank to skip): " appid || appid=""
   [[ -z "$appid" ]] && { echo "Skipped."; return; }
-  read -r -p "Proton build name exactly as Steam shows it (e.g. GE-Proton9-20, proton_experimental): " tool
+  read -r -p "Proton build name exactly as Steam shows it (e.g. GE-Proton9-20, proton_experimental): " tool || tool=""
   [[ -z "$tool" ]] && { echo "Skipped."; return; }
   set_proton_for_game "$appid" "$tool"
 }
@@ -287,10 +312,9 @@ gaming_stack_menu() {
     echo "[Advanced tier disabled] Proton-GE auto-update, Gamescope, and vkBasalt will"
     echo "be skipped — enable Advanced via './gameify.sh --tiers' to include them."
   fi
-  read -r -p "Also install Heroic Games Launcher (Epic/GOG/Amazon)? [y/N] " want_heroic
-  read -r -p "Proceed with install? [Y/n] " answer
-  answer=${answer:-Y}
-  if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+  local want_heroic
+  want_heroic="$(ask_yn "Also install Heroic Games Launcher (Epic/GOG/Amazon)?" N)"
+  if [[ "$(ask_yn "Proceed with install?" Y)" != y ]]; then
     echo "Skipping gaming stack install."
     return
   fi
@@ -309,15 +333,14 @@ gaming_stack_menu() {
     install_gamescope || true
     install_vkbasalt || echo "  vkBasalt install failed — skipping, continuing with the rest."
   fi
-  if [[ "$want_heroic" =~ ^[Yy]$ ]]; then
+  if [[ "$want_heroic" == y ]]; then
     install_heroic || echo "  Heroic install failed — skipping."
   fi
   echo "==> Gaming stack installed."
 
   if tier_enabled advanced; then
     echo ""
-    read -r -p "[Advanced] Set a specific Proton build for a specific game now? [y/N] " want_proton_override
-    if [[ "$want_proton_override" =~ ^[Yy]$ ]]; then
+    if [[ "$(ask_yn "[Advanced] Set a specific Proton build for a specific game now?" N)" == y ]]; then
       per_game_proton_menu
     fi
   fi

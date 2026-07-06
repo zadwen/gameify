@@ -1,5 +1,7 @@
 # gameify
 
+[![CI](https://github.com/zadwen/gameify/actions/workflows/ci.yml/badge.svg)](https://github.com/zadwen/gameify/actions/workflows/ci.yml)
+
 Point this at pretty much any Linux distro and it profiles your system, then
 installs, configures, and keeps updated everything needed to turn it into a
 gaming-ready desktop — the philosophy behind Nobara and Bazzite, but as a
@@ -83,6 +85,24 @@ chmod +x *.sh
 Run as a normal user — it calls `sudo` itself only for the specific commands
 that need it, and tells you before each one.
 
+**Flags:**
+```bash
+./gameify.sh --dry-run   # print every command it would run instead of running it
+./gameify.sh --tiers     # just open the tier picker and exit
+./gameify.sh --version   # print version
+./gameify.sh --help      # usage
+```
+
+**Non-interactive is safe by design, not just "doesn't crash."** Every
+yes/no prompt goes through a shared helper that checks for a real terminal
+first; without one (cron, CI, a piped invocation) it prints the prompt and
+the default it's using, then continues — nothing hangs and nothing silently
+loops forever waiting for input that will never come. Menus that pick
+something genuinely risky unattended (installing a new kernel, picking a
+driver with no GPU detected) skip themselves instead of guessing, and say so.
+Try it yourself: `./gameify.sh --dry-run < /dev/null` runs the entire flow
+end-to-end with no input at all.
+
 ## What it installs / does
 
 **Drivers** (`drivers.sh`)
@@ -139,6 +159,21 @@ that need it, and tells you before each one.
   (reusing the exact functions above) or reports them with a concrete next
   step. Runs at the end of `gameify.sh` and at the start of every
   `update.sh` run.
+
+  | Signature | Confidence | Action |
+  |---|---|---|
+  | Vulkan loader/ICD errors | Well-established (matches the standard `vkCreateInstance`/loader error text) | Reinstalls Vulkan tools/drivers |
+  | `vm.max_map_count` too low | Well-established (this is a documented cause for several UE4/5 and Proton titles) | Raises it via sysctl |
+  | GameMode requested but unavailable | Well-established (matches GameMode's own log wording) | Installs GameMode + fixes group membership |
+  | Wine/Proton prefix corruption | Heuristic — pattern match on common Wine crash/exception text, not validated against a large real-world sample yet | Offers `wineboot -u` repair (asks first) |
+  | Shader cache corruption | Heuristic, same caveat | Offers to clear Mesa's shader cache (asks first, always safe — it just rebuilds) |
+  | GPU reset / Xid errors | Well-established signal, deliberately **not** auto-fixed | Reports only, with next steps — this usually needs a human look at hardware/power settings |
+  | Missing 32-bit libraries | Heuristic | Re-enables 32-bit support |
+
+  If a signature above fires when it shouldn't (false positive) or misses a
+  real recurring bug you keep hitting, that's exactly the kind of thing
+  worth opening an issue about — see ROADMAP.md's note on growing this list
+  from real reports rather than guesses.
 
 **Weekly maintenance** (`update.sh`)
 - `[Standard]` Refreshes Flatpak apps and runs the auto-heal log scan —
@@ -235,10 +270,11 @@ This is equivalent to hand-adding:
 ## Project layout
 
 ```
-gameify.sh          entry point — report, menus, orchestration, final summary
-update.sh           weekly maintenance + cron install/remove (--install-cron/--remove-cron)
+gameify.sh          entry point — flags (--dry-run/--tiers/--version/--help), report, menus, summary
+update.sh           weekly maintenance + cron install/remove (--install-cron/--remove-cron), --dry-run
 detect.sh           distro/CPU/GPU/RAM/disk/refresh-rate/Secure-Boot/session detection + report
-pkgmanager.sh       apt/dnf/pacman/zypper abstraction, Flatpak helpers, change-log, tier framework
+pkgmanager.sh       apt/dnf/pacman/zypper abstraction, Flatpak helpers, change-log, tier framework,
+                     dry-run plumbing, non-interactive-safe prompt helper (ask_yn)
 drivers.sh          per-distro, per-vendor driver install + hybrid-GPU/PRIME + default-GPU fix
 kernel.sh           optional XanMod/Liquorix/linux-zen performance kernel install + Secure Boot check
 gaming-stack.sh     Steam/Wine/GameMode/Lutris/MangoHud/ProtonUp-Qt/GE-Proton/Gamescope/vkBasalt/Heroic
@@ -246,7 +282,22 @@ gaming-stack.sh     Steam/Wine/GameMode/Lutris/MangoHud/ProtonUp-Qt/GE-Proton/Ga
 apps.sh             optional everyday apps: Discord/OBS/Spotify (Flatpak), Battle.net/EA App (Lutris)
 tweaks.sh           Vulkan check, vm.max_map_count, gamemode group, Wine prefix repair
 heal.sh             journalctl + Steam log scanning, known-error auto-fixes
+VERSION             single-line version string, read by gameify.sh --version
+CHANGELOG.md        version history
+.github/workflows/  CI: shellcheck + bash -n + dry-run smoke test on every push/PR
 ```
+
+## Development
+
+```bash
+shellcheck -x *.sh   # zero warnings, enforced in CI
+bash -n *.sh          # syntax check, enforced in CI
+./gameify.sh --dry-run < /dev/null   # full non-interactive dry-run smoke test
+```
+
+CI (`.github/workflows/ci.yml`) runs all three of the above on every push
+and pull request against `main`. If you're contributing, please make sure
+these pass locally first — it's the same thing the workflow checks.
 
 Every install/tweak function that changes something calls `log_change`
 (defined in `pkgmanager.sh`), which both prints the action immediately and
@@ -263,7 +314,8 @@ exactly what it does. Safe to re-run at any time. Swapping kernels (XanMod/
 Liquorix/zen) carries slightly more risk than installing an app — that step
 is opt-in and off by default for a reason.
 
-See `ROADMAP.md` for where this is headed next.
+See `ROADMAP.md` for where this is headed next, and `CHANGELOG.md` for what
+changed in each version.
 
 ## License
 

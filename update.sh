@@ -19,12 +19,21 @@
 #   2. A narrowly-scoped NOPASSWD sudoers rule for just the package-manager
 #      commands this script runs (never NOPASSWD ALL). This trades some
 #      security for convenience — make that choice deliberately.
+#
+# Flags: --dry-run (print instead of run), --install-cron / --remove-cron
+# (manage gameify's own weekly crontab entry, see README.md).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 LOG_DIR="$HOME/.local/share/gameify"
 LOG_FILE="$LOG_DIR/update.log"
 mkdir -p "$LOG_DIR"
+
+DRY_RUN=false
+for arg in "$@"; do
+  [[ "$arg" == "--dry-run" ]] && DRY_RUN=true
+done
+export DRY_RUN
 
 source "$SCRIPT_DIR/detect.sh"
 source "$SCRIPT_DIR/pkgmanager.sh"
@@ -39,7 +48,8 @@ load_tier_config
 
 # --install-cron: adds a weekly (Sunday 04:00) crontab entry that runs this
 # script non-interactively, then exits. Doesn't touch anything else.
-if [[ "${1:-}" == "--install-cron" ]]; then
+for arg in "$@"; do
+if [[ "$arg" == "--install-cron" ]]; then
   CRON_MARKER="# gameify weekly update"
   CRON_LINE="0 4 * * 0 $SCRIPT_DIR/update.sh >> \"$HOME/.local/share/gameify/cron.log\" 2>&1 $CRON_MARKER"
   mkdir -p "$HOME/.local/share/gameify"
@@ -47,6 +57,10 @@ if [[ "${1:-}" == "--install-cron" ]]; then
   if echo "$existing" | grep -qF "$CRON_MARKER"; then
     echo "A gameify cron job is already installed:"
     echo "$existing" | grep -F "$CRON_MARKER"
+    exit 0
+  fi
+  if [[ "$DRY_RUN" == true ]]; then
+    dry_run_note "add this crontab entry: $CRON_LINE"
     exit 0
   fi
   { echo "$existing"; echo "$CRON_LINE"; } | grep -v '^$' | crontab -
@@ -62,12 +76,17 @@ if [[ "${1:-}" == "--install-cron" ]]; then
   exit 0
 fi
 
-if [[ "${1:-}" == "--remove-cron" ]]; then
+if [[ "$arg" == "--remove-cron" ]]; then
   CRON_MARKER="# gameify weekly update"
+  if [[ "$DRY_RUN" == true ]]; then
+    dry_run_note "remove gameify's crontab entry (marker: $CRON_MARKER)"
+    exit 0
+  fi
   crontab -l 2>/dev/null | grep -vF "$CRON_MARKER" | crontab - || true
   echo "Removed gameify's cron job (if it was present)."
   exit 0
 fi
+done
 
 INTERACTIVE=false
 if [[ -t 0 ]]; then
@@ -79,6 +98,9 @@ fi
   echo "=================================================="
   echo " gameify update — $(date '+%Y-%m-%d %H:%M:%S')"
   echo " Tiers: Standard (always), Advanced=$ENABLE_ADVANCED, Experimental=$ENABLE_EXPERIMENTAL"
+  if [[ "$DRY_RUN" == true ]]; then
+    echo " DRY-RUN MODE — nothing below will actually be installed or changed."
+  fi
   echo "=================================================="
 
   echo "==> Updating Flatpak apps..."

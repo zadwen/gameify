@@ -36,13 +36,17 @@ _kernel_secure_boot_check() {
     echo "    2) Sign the kernel modules yourself and enroll a MOK key (mokutil)."
     echo ""
     if command -v mokutil >/dev/null 2>&1; then
-      read -r -p "  Continue installing anyway? [y/N] " sb_go
-      [[ "$sb_go" =~ ^[Yy]$ ]] || { echo "  Skipping kernel install."; return 1; }
+      if [[ "$(ask_yn "  Continue installing anyway?" N)" != y ]]; then
+        echo "  Skipping kernel install."
+        return 1
+      fi
     else
       echo "  ('mokutil' isn't installed, so gameify can't offer to enroll a MOK key"
       echo "  for you automatically — you'd need to do that by hand.)"
-      read -r -p "  Continue installing anyway? [y/N] " sb_go
-      [[ "$sb_go" =~ ^[Yy]$ ]] || { echo "  Skipping kernel install."; return 1; }
+      if [[ "$(ask_yn "  Continue installing anyway?" N)" != y ]]; then
+        echo "  Skipping kernel install."
+        return 1
+      fi
     fi
   fi
   return 0
@@ -63,10 +67,14 @@ install_xanmod() {
   local level
   level="$(_xanmod_psabi_level)"
   echo "  Detected CPU instruction level: x64v${level}"
-  sudo mkdir -p /etc/apt/keyrings
-  curl -fsSL https://dl.xanmod.org/archive.key | sudo gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
-  echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main" \
-    | sudo tee /etc/apt/sources.list.d/xanmod-release.list >/dev/null
+  if [[ "$DRY_RUN" == true ]]; then
+    dry_run_note "add XanMod's apt repo + signing key, then install linux-xanmod-x64v${level}"
+  else
+    sudo mkdir -p /etc/apt/keyrings
+    curl -fsSL https://dl.xanmod.org/archive.key | sudo gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
+    echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main" \
+      | sudo tee /etc/apt/sources.list.d/xanmod-release.list >/dev/null
+  fi
   pkg_update
   pkg_install "linux-xanmod-x64v${level}"
   log_change "Installed XanMod kernel (x64v${level})"
@@ -85,9 +93,13 @@ install_liquorix() {
     return 0
   fi
   echo "==> Installing Liquorix kernel..."
-  curl -fsSL 'https://liquorix.net/add-liquorix-repo.gpg.key' | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/liquorix-keyring.gpg
-  echo "deb http://liquorix.net/debian $(lsb_release -cs 2>/dev/null || echo sid) main" \
-    | sudo tee /etc/apt/sources.list.d/liquorix.list >/dev/null
+  if [[ "$DRY_RUN" == true ]]; then
+    dry_run_note "add Liquorix's apt repo + signing key, then install linux-image/headers-liquorix-amd64"
+  else
+    curl -fsSL 'https://liquorix.net/add-liquorix-repo.gpg.key' | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/liquorix-keyring.gpg
+    echo "deb http://liquorix.net/debian $(lsb_release -cs 2>/dev/null || echo sid) main" \
+      | sudo tee /etc/apt/sources.list.d/liquorix.list >/dev/null
+  fi
   pkg_update
   pkg_install linux-image-liquorix-amd64 linux-headers-liquorix-amd64
   log_change "Installed Liquorix kernel"
@@ -125,22 +137,28 @@ kernel_menu() {
   echo "(You can always boot back into your original kernel from the bootloader menu.)"
   echo "  Secure Boot: $(detect_secure_boot 2>/dev/null || echo unknown)"
 
+  if ! is_interactive; then
+    echo "  (non-interactive — skipping performance-kernel install; this needs an"
+    echo "  interactive choice since it changes what you boot into.)"
+    return 0
+  fi
+
   case "$PKG_FAMILY" in
     debian)
       select opt in "XanMod" "Liquorix" "Skip"; do
-        case "$REPLY" in
-          1) install_xanmod || echo "  XanMod install failed — see message above."; break ;;
-          2) install_liquorix || echo "  Liquorix install failed — see message above."; break ;;
-          3) echo "Skipping performance kernel."; break ;;
+        case "$opt" in
+          "XanMod") install_xanmod || echo "  XanMod install failed — see message above."; break ;;
+          "Liquorix") install_liquorix || echo "  Liquorix install failed — see message above."; break ;;
+          "Skip") echo "Skipping performance kernel."; break ;;
           *) echo "Invalid choice." ;;
         esac
       done
       ;;
     arch)
       select opt in "linux-zen" "Skip"; do
-        case "$REPLY" in
-          1) install_linux_zen || echo "  linux-zen install failed — see message above."; break ;;
-          2) echo "Skipping performance kernel."; break ;;
+        case "$opt" in
+          "linux-zen") install_linux_zen || echo "  linux-zen install failed — see message above."; break ;;
+          "Skip") echo "Skipping performance kernel."; break ;;
           *) echo "Invalid choice." ;;
         esac
       done

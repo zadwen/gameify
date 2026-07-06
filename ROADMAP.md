@@ -33,6 +33,28 @@ The system-analyzer/auto-healing pass added:
       `~/.config/gameify/tiers.conf` (`./gameify.sh --tiers` to change) —
       `pkgmanager.sh` (framework) + every module (labeling/gating)
 
+The reliability/safety pass added:
+
+- [x] **`--dry-run`** — every mutating call (package installs, sysctl
+      writes, file writes, downloads, cron changes) prints what it would do
+      instead of doing it, threaded through the whole codebase from the
+      `pkg_install`/`pkg_update`/`pkg_upgrade`/`flatpak_install` chokepoints
+      outward — `pkgmanager.sh` + every module
+- [x] **Non-interactive-safe prompts** — every yes/no prompt now goes
+      through a shared `ask_yn` helper that checks for a real terminal
+      first and falls back to a stated default instead of hanging or (in
+      one real case this surfaced) spinning forever on a `select` menu fed
+      by a pipe with no matching input — `pkgmanager.sh` + every module
+- [x] CI (`shellcheck` + `bash -n` + an end-to-end `--dry-run` smoke test
+      with no stdin) on every push/PR — `.github/workflows/ci.yml`
+- [x] Fixed a real `set -u` bug this pass's own testing caught: an
+      array declared with `declare -a CHANGELOG` and never assigned reads
+      as "unbound" the first time it's empty-checked, on this project's
+      bash version — changed to `CHANGELOG=()`. Left in here as a reminder
+      that the CI smoke test earns its keep by catching exactly this kind
+      of thing before a real user does.
+- [x] `VERSION` file + `--version`/`--help` flags + `CHANGELOG.md`
+
 ## Where gameify stands today
 
 A convenience layer on top of your existing distro: detect hardware,
@@ -60,8 +82,13 @@ model, not just a different package list.
 
 ## Realistic near-term improvements (script stays a script)
 
-- [ ] `--dry-run` flag across every module — print every command instead of
-      running it, so people can audit before trusting it with sudo.
+- [ ] `gameify.sh --undo <thing>` for the handful of actions that are
+      currently "reversible in theory, manual in practice" — remove a
+      performance kernel's packages/repo, revert a `config.vdf` Proton
+      override from its `.gameify.bak`, remove the `vm.max_map_count`
+      sysctl drop-in. Most other actions (installing an app, adding a
+      Flatpak) are already trivially reversible with the package manager
+      directly, so this is about the handful of fiddlier ones.
 - [ ] Expand `~/.config/gameify/` beyond tiers to remember per-run choices
       too (which driver, whether to install Heroic, kernel choice) so
       re-runs and `update.sh` don't have to re-ask about those either — the

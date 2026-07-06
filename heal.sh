@@ -100,15 +100,13 @@ heal_check_shader_cache() {
     _heal_report "Corrupted shader cache signature in logs"
     local shader_dir="$HOME/.cache/mesa_shader_cache"
     if [[ -d "$shader_dir" ]]; then
-      local go="n"
-      if [[ -t 0 ]]; then
-        read -r -p "  Clear Mesa's shader cache at $shader_dir? Safe — it just rebuilds on next launch. [y/N] " go || go="n"
-      else
-        echo "  (non-interactive run — skipping shader-cache clear prompt)"
-      fi
-      if [[ "$go" =~ ^[Yy]$ ]]; then
-        rm -rf "${shader_dir:?}"/*
-        _heal_fixed "Cleared Mesa shader cache"
+      if [[ "$(ask_yn "  Clear Mesa's shader cache at $shader_dir? Safe — it just rebuilds on next launch." N)" == y ]]; then
+        if [[ "$DRY_RUN" == true ]]; then
+          dry_run_note "rm -rf $shader_dir/*"
+        else
+          rm -rf "${shader_dir:?}"/*
+          _heal_fixed "Cleared Mesa shader cache"
+        fi
       fi
     fi
   fi
@@ -169,9 +167,7 @@ run_auto_heal() {
 
 auto_heal_menu() {
   echo ""
-  read -r -p "[Standard] Scan logs for known gaming bugs and auto-fix what's safe to fix? [Y/n] " answer
-  answer=${answer:-Y}
-  if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+  if [[ "$(ask_yn "[Standard] Scan logs for known gaming bugs and auto-fix what's safe to fix?" Y)" != y ]]; then
     echo "Skipping auto-heal scan."
     return
   fi

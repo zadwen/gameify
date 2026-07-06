@@ -190,7 +190,7 @@ detect_kernel_version() {
 # ---------- Report ----------
 
 print_system_report() {
-  local family gpus gpu_models cpu_vendor cpu_model cpu_cores session secureboot ram disk disktype hybrid refresh
+  local family gpus gpu_models cpu_vendor cpu_model cpu_cores session secureboot ram disk disktype refresh
 
   family="$(detect_distro_family)"
   gpus="$(detect_gpu_vendors)"

@@ -13,6 +13,10 @@ tweak_vm_max_map_count() {
     return 0
   fi
   echo "==> Raising vm.max_map_count (needed by some Proton/Steam titles, e.g. certain UE4/5 games)..."
+  if [[ "$DRY_RUN" == true ]]; then
+    dry_run_note "write vm.max_map_count=$target to $conf and reload sysctl"
+    return 0
+  fi
   echo "vm.max_map_count=$target" | sudo tee "$conf" >/dev/null
   sudo sysctl --system >/dev/null
   log_change "Raised vm.max_map_count to $target"
@@ -28,6 +32,10 @@ tweak_gamemode_group() {
     return 0
   fi
   echo "==> Adding your user to the 'gamemode' group so GameMode can adjust performance..."
+  if [[ "$DRY_RUN" == true ]]; then
+    dry_run_note "usermod -aG gamemode $USER"
+    return 0
+  fi
   sudo usermod -aG gamemode "$USER" || true
   log_change "Added $USER to the gamemode group (log out/in to apply)"
 }
@@ -95,16 +103,16 @@ fix_broken_wine_prefixes() {
     if _wine_prefix_is_broken "$p"; then
       broken_any=true
       echo "  Broken prefix found: $p"
-      local fix_it="n"
-      if [[ -t 0 ]]; then
-        read -r -p "  Attempt repair with 'wineboot -u'? [y/N] " fix_it || fix_it="n"
-      else
-        echo "  (non-interactive run — skipping repair prompt; re-run by hand to fix)"
-      fi
-      if [[ "$fix_it" =~ ^[Yy]$ ]]; then
-        WINEPREFIX="$p" wineboot -u 2>/dev/null && \
-          log_change "Repaired Wine prefix: $p" || \
-          echo "  Repair attempt failed — this prefix may need to be deleted and recreated."
+      local fix_it
+      fix_it="$(ask_yn "  Attempt repair with 'wineboot -u'?" N)"
+      if [[ "$fix_it" == y ]]; then
+        if [[ "$DRY_RUN" == true ]]; then
+          dry_run_note "WINEPREFIX=$p wineboot -u"
+        else
+          WINEPREFIX="$p" wineboot -u 2>/dev/null && \
+            log_change "Repaired Wine prefix: $p" || \
+            echo "  Repair attempt failed — this prefix may need to be deleted and recreated."
+        fi
       fi
     fi
   done <<< "$prefixes"
@@ -113,9 +121,7 @@ fix_broken_wine_prefixes() {
 
 system_tweaks_menu() {
   echo ""
-  read -r -p "[Standard] Apply system tweaks + auto-fixes (Vulkan check, vm.max_map_count, gamemode group, Wine prefix scan)? [Y/n] " answer
-  answer=${answer:-Y}
-  if [[ ! "$answer" =~ ^[Yy]$ ]]; then
+  if [[ "$(ask_yn "[Standard] Apply system tweaks + auto-fixes (Vulkan check, vm.max_map_count, gamemode group, Wine prefix scan)?" Y)" != y ]]; then
     echo "Skipping system tweaks."
     return
   fi

@@ -4,6 +4,40 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+GAMEIFY_VERSION="$(cat "$SCRIPT_DIR/VERSION" 2>/dev/null || echo "unknown")"
+
+print_help() {
+  cat <<EOF
+gameify $GAMEIFY_VERSION — turn any Linux distro into a gaming rig
+
+Usage: ./gameify.sh [options]
+
+Options:
+  --dry-run     Print every command that would run (install, sysctl, file
+                write, download) instead of running it. Combine with a
+                normal run to audit exactly what gameify would touch.
+  --tiers       Just open the Standard/Advanced/Experimental tier picker
+                and exit, without running the rest of the setup flow.
+  --version     Print the version and exit.
+  --help, -h    Print this help and exit.
+
+With no options, runs the full interactive setup: system report, tier
+picker, driver/kernel/gaming-stack/apps/tweaks menus, auto-heal scan, and
+a final summary of what changed.
+
+See also: ./update.sh --install-cron / --remove-cron for weekly maintenance.
+EOF
+}
+
+DRY_RUN=false
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=true ;;
+    --version) echo "gameify $GAMEIFY_VERSION"; exit 0 ;;
+    --help|-h) print_help; exit 0 ;;
+  esac
+done
+export DRY_RUN
 
 source "$SCRIPT_DIR/detect.sh"
 source "$SCRIPT_DIR/pkgmanager.sh"
@@ -20,14 +54,19 @@ if [[ "${EUID}" -eq 0 ]]; then
   exit 1
 fi
 
-if [[ "${1:-}" == "--tiers" ]]; then
-  choose_tiers
-  exit 0
-fi
+for arg in "$@"; do
+  if [[ "$arg" == "--tiers" ]]; then
+    choose_tiers
+    exit 0
+  fi
+done
 
 echo "=================================================="
-echo " Gameify — turn any Linux distro into a gaming rig"
+echo " Gameify $GAMEIFY_VERSION — turn any Linux distro into a gaming rig"
 echo "=================================================="
+if [[ "$DRY_RUN" == true ]]; then
+  echo " DRY-RUN MODE — nothing will actually be installed or changed."
+fi
 echo ""
 
 print_system_report
@@ -38,17 +77,14 @@ GPU_VENDORS="$(detect_gpu_vendors)"
 
 if [[ "$PKG_FAMILY" == "unknown" ]]; then
   echo ""
-  read -r -p "Your distro family wasn't recognized. Continue anyway? [y/N] " force_go
-  if [[ ! "$force_go" =~ ^[Yy]$ ]]; then
+  if [[ "$(ask_yn "Your distro family wasn't recognized. Continue anyway?" N)" != y ]]; then
     echo "Aborted."
     exit 0
   fi
 fi
 
 echo ""
-read -r -p "Proceed with setup? [Y/n] " go
-go=${go:-Y}
-if [[ ! "$go" =~ ^[Yy]$ ]]; then
+if [[ "$(ask_yn "Proceed with setup?" Y)" != y ]]; then
   echo "Aborted."
   exit 0
 fi
@@ -71,6 +107,10 @@ echo ""
 echo "=================================================="
 echo " Summary — what actually changed"
 echo "=================================================="
+if [[ "$DRY_RUN" == true ]]; then
+  echo " DRY-RUN MODE — nothing above was actually changed. Re-run without"
+  echo " --dry-run to apply it for real."
+fi
 echo " Tiers active: Standard (always), Advanced=$ENABLE_ADVANCED, Experimental=$ENABLE_EXPERIMENTAL"
 echo ""
 if [[ "${#CHANGELOG[@]}" -eq 0 ]]; then
@@ -83,9 +123,12 @@ fi
 echo "=================================================="
 
 echo ""
+if [[ "$DRY_RUN" == true ]]; then
+  echo "Dry-run complete — nothing was installed, changed, or rebooted."
+  exit 0
+fi
 echo "A reboot is recommended, especially after installing/updating a GPU driver"
 echo "or performance kernel."
-read -r -p "Reboot now? [y/N] " reboot_now
-if [[ "$reboot_now" =~ ^[Yy]$ ]]; then
+if [[ "$(ask_yn "Reboot now?" N)" == y ]]; then
   sudo reboot
 fi
