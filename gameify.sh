@@ -84,7 +84,7 @@ if [[ -n "$GAME_MODE_ACTION" ]]; then
     on) gamemode_on ;;
     off) gamemode_off ;;
     toggle) gamemode_toggle ;;
-    status) echo "Game Mode is currently: $(gamemode_status)" ;;
+    status) print_gamemode_status ;;
     *) echo "Usage: --game-mode on|off|toggle|status"; exit 1 ;;
   esac
   exit 0
@@ -151,6 +151,12 @@ else
   done
 fi
 echo "=================================================="
+
+if [[ -f "$LIMITS_DROPIN" ]]; then
+  echo ""
+  echo "NOTE: System file-descriptor adjustments (ulimit) require a complete user"
+  echo "log out or reboot to apply to your desktop session."
+fi
 
 echo ""
 if [[ "$DRY_RUN" == true ]]; then

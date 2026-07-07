@@ -15,6 +15,7 @@ set -euo pipefail
 
 GAMEIFY_STATE_DIR="$GAMEIFY_CONFIG_DIR/gamemode-state"
 GOVERNOR_STATE_FILE="$GAMEIFY_STATE_DIR/prev-governor"
+PROFILE_STATE_FILE="$GAMEIFY_STATE_DIR/prev-power-profile"
 ACTIVE_FLAG_FILE="$GAMEIFY_STATE_DIR/active"
 LIMITS_DROPIN="/etc/security/limits.d/99-gameify-gamemode.conf"
 
@@ -41,9 +42,43 @@ _set_governor() {
   done < <(_cpu_governor_paths)
 }
 
+# On GNOME (and some other DEs), power-profiles-daemon runs in the
+# background and will silently overwrite a raw sysfs governor write within
+# seconds — the write "succeeds" but doesn't stick, which looks like a bug
+# in gameify when it's actually two things fighting over the same knob.
+# Where powerprofilesctl exists, we set the daemon's own profile *in
+# addition to* the raw sysfs write, so nothing overrides it after the fact.
+_has_power_profiles_daemon() {
+  command -v powerprofilesctl >/dev/null 2>&1
+}
+
+_set_power_profile() {
+  local profile="$1"
+  if ! _has_power_profiles_daemon; then
+    return 1
+  fi
+  run_priv "powerprofilesctl set $profile" -- powerprofilesctl set "$profile" 2>/dev/null
+}
+
 gamemode_status() {
   mkdir -p "$GAMEIFY_STATE_DIR"
   if [[ -f "$ACTIVE_FLAG_FILE" ]]; then echo "on"; else echo "off"; fi
+}
+
+# User-facing status report (used by `--game-mode status` and the menu).
+# Kept separate from gamemode_status() itself, which stays a plain "on"/
+# "off" value other functions rely on programmatically.
+print_gamemode_status() {
+  local state
+  state="$(gamemode_status)"
+  echo "Game Mode is currently: $state"
+  if [[ -f "$LIMITS_DROPIN" ]]; then
+    echo ""
+    echo "NOTE: System file-descriptor adjustments (ulimit) require a complete user"
+    echo "log out or reboot to apply to your desktop session. Checking 'ulimit -n' in"
+    echo "an existing terminal/session will still show the old value (typically 1024)"
+    echo "until that happens — this is expected, not a failure of Game Mode."
+  fi
 }
 
 _clear_ram_caches() {
@@ -128,6 +163,19 @@ gamemode_on() {
     echo "  'performance' governor isn't available on this CPU/driver — skipping that part."
   fi
 
+  if _has_power_profiles_daemon; then
+    # GNOME (and others) run power-profiles-daemon in the background, which
+    # will silently revert a raw governor write within seconds if the
+    # daemon's own profile isn't also changed. Save the current profile so
+    # toggling off restores it exactly, rather than assuming "balanced".
+    local prev_profile
+    prev_profile="$(powerprofilesctl get 2>/dev/null || echo "")"
+    [[ -n "$prev_profile" ]] && echo "$prev_profile" > "$PROFILE_STATE_FILE"
+    if _set_power_profile performance; then
+      log_change "Game Mode: set power-profiles-daemon to performance (was: ${prev_profile:-unknown})"
+    fi
+  fi
+
   _clear_ram_caches
   log_change "Game Mode: cleared RAM caches"
 
@@ -162,6 +210,19 @@ gamemode_off() {
     log_change "Game Mode: restored CPU governor to $gov"
   fi
 
+  if _has_power_profiles_daemon; then
+    local restore_profile="balanced"
+    if [[ -f "$PROFILE_STATE_FILE" ]]; then
+      restore_profile="$(cat "$PROFILE_STATE_FILE")"
+    else
+      echo "  No saved previous power profile found — restoring to 'balanced' as the safe default."
+    fi
+    if _set_power_profile "$restore_profile"; then
+      log_change "Game Mode: restored power-profiles-daemon to $restore_profile"
+    fi
+    rm -f "$PROFILE_STATE_FILE"
+  fi
+
   _restore_fd_limits && log_change "Game Mode: restored file-descriptor limits"
 
   _resume_compositor
@@ -185,9 +246,7 @@ game_mode_menu() {
     return 0
   fi
   echo ""
-  local current
-  current="$(gamemode_status)"
-  echo "Game Mode is currently: $current"
+  print_gamemode_status
   if [[ "$(ask_yn "[Advanced] Toggle Game Mode now (CPU governor, RAM cache, fd limits, compositor)?" N)" == y ]]; then
     gamemode_toggle
   fi

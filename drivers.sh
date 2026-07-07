@@ -166,6 +166,32 @@ export __GLX_VENDOR_LIBRARY_NAME=nvidia
 export __VK_LAYER_NV_optimus=NVIDIA_only
 exec "$@"
 EOF
+    elif detect_hybrid_gpu && echo "$vendors" | grep -qw amd && echo "$vendors" | grep -qw intel; then
+      # AMD discrete + Intel integrated hybrid laptop (e.g. Zorin/Ubuntu on
+      # Ryzen-with-Radeon + Intel iGPU hardware). DRI_PRIME=1 is what
+      # actually performs the offload; the Vulkan ICD list is only added
+      # if those files genuinely exist on this machine, so a leaner Mesa
+      # install (no i686/multilib package) doesn't get pointed at a
+      # nonexistent ICD path, which would break Vulkan detection instead of
+      # fixing it.
+      local icd_64="/usr/share/vulkan/icd.d/radeon_icd.x86_64.json"
+      local icd_32="/usr/share/vulkan/icd.d/radeon_icd.i686.json"
+      local icd_list=""
+      [[ -f "$icd_64" ]] && icd_list="$icd_64"
+      [[ -f "$icd_32" ]] && icd_list="${icd_list:+$icd_list:}$icd_32"
+
+      {
+        echo '#!/usr/bin/env bash'
+        echo '# Forces the following command onto the AMD discrete GPU (hybrid AMD+Intel laptop).'
+        echo '# DRI_PRIME=1 is what actually performs the render offload on Mesa/RadeonSI/RADV;'
+        echo '# DRI_PRIME_VENDOR_ID is included for explicitness on newer Mesa but is not required.'
+        echo 'export DRI_PRIME=1'
+        echo 'export DRI_PRIME_VENDOR_ID=0x1002'
+        if [[ -n "$icd_list" ]]; then
+          echo "export VK_ICD_FILENAMES=\"$icd_list\""
+        fi
+        echo 'exec "$@"'
+      } > "$wrapper"
     else
       cat > "$wrapper" <<'EOF'
 #!/usr/bin/env bash
