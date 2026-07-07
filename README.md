@@ -1,6 +1,6 @@
 # gameify
 
-[![CI](https://github.com/zadwen/gameify/actions/workflows/ci.yml/badge.svg)](https://github.com/zadwen/gameify/actions/workflows/ci.yml)
+
 
 Point this at pretty much any Linux distro and it profiles your system, then
 installs, configures, and keeps updated everything needed to turn it into a
